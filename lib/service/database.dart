@@ -1,85 +1,80 @@
 import 'package:chat_app/service/shared_pref.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_core/firebase_core.dart';
 
 class DatabaseMethods {
-  Future addUserDetails(Map<String, dynamic> userInfoMap, String id) async {
-    return await FirebaseFirestore.instance
-        .collection("users")
-        .doc(id)
-        .set(userInfoMap);
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  DocumentReference _getDocReference(String collection, String docId) {
+    return _firestore.collection(collection).doc(docId);
+  }
+
+  CollectionReference _getCollectionReference(String collection) {
+    return _firestore.collection(collection);
+  }
+
+  Future<void> addUserDetails(
+      Map<String, dynamic> userInfoMap, String id) async {
+    return await _getDocReference("users", id).set(userInfoMap);
   }
 
   Future<QuerySnapshot> getUserByEmail(String email) async {
-    return await FirebaseFirestore.instance
-        .collection("users")
+    return await _getCollectionReference("users")
         .where("E-mail", isEqualTo: email)
         .get();
   }
 
-  Future<QuerySnapshot> Search(String userName) async {
-    return await FirebaseFirestore.instance
-        .collection("users")
+  Future<QuerySnapshot> search(String userName) async {
+    return await _getCollectionReference("users")
         .where("SearchKey", isEqualTo: userName.substring(0, 1).toUpperCase())
         .get();
   }
 
-  createChatRoom(
+  Future<bool> createChatRoom(
       String chatRoomId, Map<String, dynamic> chatRoomInfoMap) async {
-    final snapshot = await FirebaseFirestore.instance
-        .collection("chatrooms")
-        .doc(chatRoomId)
-        .get();
+    final snapshot = await _getDocReference("chatrooms", chatRoomId).get();
     if (snapshot.exists) {
       return true;
     } else {
-      return FirebaseFirestore.instance
-          .collection("chatrooms")
-          .doc(chatRoomId)
-          .set(chatRoomInfoMap);
+      await _getDocReference("chatrooms", chatRoomId).set(chatRoomInfoMap);
+      return false;
     }
   }
 
-  Future addMessage(String chatRoomId, String messageId,
+  Future<void> addMessage(String chatRoomId, String messageId,
       Map<String, dynamic> messageInfoMap) async {
-    return await FirebaseFirestore.instance
-        .collection("chatrooms")
-        .doc(chatRoomId)
+    return await _getDocReference("chatrooms", chatRoomId)
         .collection("chats")
         .doc(messageId)
         .set(messageInfoMap);
   }
 
-  updateLastMessageSend(
-      String chatRoomId, Map<String, dynamic> lastMessageInfoMap) {
-    return FirebaseFirestore.instance
-        .collection("chatrooms")
-        .doc(chatRoomId)
+  Future<void> updateLastMessageSend(
+      String chatRoomId, Map<String, dynamic> lastMessageInfoMap) async {
+    return await _getDocReference("chatrooms", chatRoomId)
         .update(lastMessageInfoMap);
   }
 
-  Future<Stream<QuerySnapshot>> getChatRoomMessages(chatRoomId) async {
-    return FirebaseFirestore.instance
-        .collection("chatrooms")
-        .doc(chatRoomId)
+  Future<Stream<QuerySnapshot>> getChatRoomMessages(String? chatRoomId) async {
+    return _getDocReference("chatrooms", chatRoomId!)
         .collection("chats")
         .orderBy("time", descending: true)
         .snapshots();
   }
 
   Future<QuerySnapshot> getUserInfo(String userName) async {
-    return await FirebaseFirestore.instance
-        .collection("users")
+    return await _getCollectionReference("users")
         .where("UserName", isEqualTo: userName)
         .get();
   }
 
   Future<Stream<QuerySnapshot>> getChatRooms() async {
     String? myUserName = await SharedPreferenceHelper().getUserName();
-    return FirebaseFirestore.instance
-        .collection("chatrooms")
+    if (myUserName == null) {
+      throw Exception("User name not found");
+    }
+    return _getCollectionReference("chatrooms")
         .orderBy("time", descending: true)
-        .where("users", arrayContains: myUserName!)
+        .where("users", arrayContains: myUserName)
         .snapshots();
   }
 }

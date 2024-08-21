@@ -7,52 +7,91 @@ import 'package:intl/intl.dart';
 import 'package:random_string/random_string.dart';
 
 class ChatPage extends StatefulWidget {
-  String name, profileUrl, userName;
-  ChatPage(
-      {required this.name, required this.profileUrl, required this.userName});
+  final String name, profileUrl, userName;
+
+  const ChatPage({
+    super.key,
+    required this.name,
+    required this.profileUrl,
+    required this.userName,
+  });
 
   @override
   State<ChatPage> createState() => _ChatPageState();
 }
 
 class _ChatPageState extends State<ChatPage> {
-  TextEditingController messageController = new TextEditingController();
-  String? myUserName, myProfilePic, myName, myEmail, messageId, chatRoomId;
-  Stream? messageStream;
-
-  getTheSharedPref() async {
-    myUserName = await SharedPreferenceHelper().getUserName();
-    myProfilePic = await SharedPreferenceHelper().getUserPic();
-    myName = await SharedPreferenceHelper().getUserDisplayName();
-    myEmail = await SharedPreferenceHelper().getUserEmail();
-    chatRoomId = getChatRoomIdByUserName(widget.userName, myUserName!);
-    setState(() {});
-  }
-
-  onTheLoad() async {
-    await getTheSharedPref();
-    await getAndSetMessages();
-    setState(() {});
-  }
+  final TextEditingController _messageController = TextEditingController();
+  String? _myUserName, _myProfilePic, _messageId, _chatRoomId;
+  Stream<QuerySnapshot>? _messageStream;
 
   @override
   void initState() {
     super.initState();
-    onTheLoad();
+    _initializeChat();
   }
 
-  getChatRoomIdByUserName(String a, String b) {
-    if (a.substring(0, 1).codeUnitAt(0) > b.substring(0, 1).codeUnitAt(0)) {
-      return "$b\_$a";
-    } else {
-      return "$a\_$b";
+  Future<void> _initializeChat() async {
+    await _getSharedPreferences();
+    await _fetchMessages();
+  }
+
+  Future<void> _getSharedPreferences() async {
+    final prefs = SharedPreferenceHelper();
+    _myUserName = await prefs.getUserName();
+    _myProfilePic = await prefs.getUserPic();
+    _chatRoomId = _getChatRoomIdByUserName(widget.userName, _myUserName!);
+    setState(() {});
+  }
+
+  String _getChatRoomIdByUserName(String a, String b) {
+    return a.codeUnitAt(0) > b.codeUnitAt(0) ? "${b}_$a" : "${a}_$b";
+  }
+
+  Future<void> _fetchMessages() async {
+    _messageStream = await DatabaseMethods().getChatRoomMessages(_chatRoomId);
+    setState(() {});
+  }
+
+  void _addMessage(bool sendClicked) {
+    final messageText = _messageController.text.trim();
+    if (messageText.isNotEmpty) {
+      _messageController.clear();
+
+      final now = DateTime.now();
+      final formattedDate = DateFormat('h:mma').format(now);
+      final messageInfo = {
+        "message": messageText,
+        "sendBy": _myUserName,
+        "timeStamp": formattedDate,
+        "time": FieldValue.serverTimestamp(),
+        "imageUrl": _myProfilePic,
+      };
+
+      _messageId ??= randomAlphaNumeric(10);
+
+      DatabaseMethods()
+          .addMessage(_chatRoomId!, _messageId!, messageInfo)
+          .then((_) {
+        final lastMessageInfo = {
+          "lastMessage": messageText,
+          "lastMessageSendTs": formattedDate,
+          "time": FieldValue.serverTimestamp(),
+          "lastMessageSendBy": _myUserName,
+        };
+
+        DatabaseMethods().updateLastMessageSend(_chatRoomId!, lastMessageInfo);
+        if (sendClicked) {
+          _messageId = null;
+        }
+      });
     }
   }
 
-  Widget chatMessageTile(String message, bool sendByMe) {
+  Widget _chatMessageTile(String message, bool sentByMe) {
     return Row(
       mainAxisAlignment:
-          sendByMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+          sentByMe ? MainAxisAlignment.end : MainAxisAlignment.start,
       children: [
         Flexible(
           child: Container(
@@ -62,21 +101,22 @@ class _ChatPageState extends State<ChatPage> {
               borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(24),
                 bottomRight:
-                    sendByMe ? Radius.circular(0) : Radius.circular(24.0),
+                    sentByMe ? Radius.circular(0) : Radius.circular(24.0),
                 topRight: Radius.circular(24.0),
                 bottomLeft:
-                    sendByMe ? Radius.circular(24.0) : Radius.circular(0),
+                    sentByMe ? Radius.circular(24.0) : Radius.circular(0),
               ),
-              color: sendByMe
+              color: sentByMe
                   ? Color.fromARGB(255, 234, 236, 240)
                   : Color.fromARGB(255, 211, 228, 243),
             ),
             child: Text(
               message,
               style: TextStyle(
-                  color: Colors.black,
-                  fontSize: 15.0,
-                  fontWeight: FontWeight.w500),
+                color: Colors.black,
+                fontSize: 15.0,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
         ),
@@ -84,150 +124,117 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  Widget chatMessage() {
-    return StreamBuilder(
-        stream: messageStream,
-        builder: (context, AsyncSnapshot snapshot) {
-          return snapshot.hasData
-              ? ListView.builder(
-                  padding: EdgeInsets.only(bottom: 90.0, top: 130.0),
-                  itemCount: snapshot.data.docs.length,
-                  reverse: true,
-                  itemBuilder: (context, index) {
-                    DocumentSnapshot documentSnapshot =
-                        snapshot.data.docs[index];
-                    return chatMessageTile(documentSnapshot['message'],
-                        myUserName == documentSnapshot['sendBy']);
-                  })
-              : Center(
-                  child: CircularProgressIndicator(),
-                );
-        });
-  }
-
-  addMessage(bool sendClicked) {
-    if (messageController.text.isNotEmpty) {
-      String message = messageController.text;
-      messageController.text = "";
-
-      DateTime now = DateTime.now();
-      String formattedDate = DateFormat('h:mma').format(now);
-      Map<String, dynamic> messageInfoMap = {
-        "message": message,
-        "sendBy": myUserName,
-        "timeStamp": formattedDate,
-        "time": FieldValue.serverTimestamp(),
-        "imageUrl": myProfilePic,
-      };
-
-      messageId ??= randomAlphaNumeric(10);
-
-      DatabaseMethods()
-          .addMessage(chatRoomId!, messageId!, messageInfoMap)
-          .then((value) {
-        Map<String, dynamic> lastMessageInfoMap = {
-          "lastMessage": message,
-          "lastMessageSendTs": formattedDate,
-          "time": FieldValue.serverTimestamp(),
-          "lastMessageSendBy": myUserName,
-        };
-
-        DatabaseMethods()
-            .updateLastMessageSend(chatRoomId!, lastMessageInfoMap);
-        if (sendClicked) {
-          messageId = null;
+  Widget _buildChatMessages() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: _messageStream,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Center(child: CircularProgressIndicator());
+        } else if (snapshot.hasData) {
+          final messages = snapshot.data!.docs;
+          return ListView.builder(
+            padding: EdgeInsets.only(bottom: 90.0, top: 130.0),
+            itemCount: messages.length,
+            reverse: true,
+            itemBuilder: (context, index) {
+              final message = messages[index];
+              final isSentByMe = _myUserName == message['sendBy'];
+              return _chatMessageTile(message['message'], isSentByMe);
+            },
+          );
+        } else {
+          return Center(child: Text('No messages'));
         }
-      });
-    }
-  }
-
-  getAndSetMessages() async {
-    messageStream = await DatabaseMethods().getChatRoomMessages(chatRoomId);
-    setState(() {});
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Color(0xFF553370),
-      body: Container(
-        margin: EdgeInsets.only(
-          top: 50.0,
+      body: Stack(
+        children: [
+          _buildChatBackground(),
+          _buildAppBar(),
+          _buildMessageInput(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChatBackground() {
+    return Container(
+      margin: EdgeInsets.only(top: 50.0),
+      width: MediaQuery.of(context).size.width,
+      height: MediaQuery.of(context).size.height / 1.12,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(30.0),
+          topRight: Radius.circular(30.0),
         ),
-        child: Stack(
-          children: [
-            Container(
-                margin: EdgeInsets.only(top: 50.0),
-                width: MediaQuery.of(context).size.width,
-                height: MediaQuery.of(context).size.height / 1.12,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(30.0),
-                    topRight: Radius.circular(30.0),
-                  ),
-                ),
-                child: chatMessage()),
-            Padding(
-              padding: const EdgeInsets.only(left: 10.0),
-              child: Row(
-                children: [
-                  GestureDetector(
-                    onTap: () {
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(builder: (context) => Home()),
-                      );
-                    },
-                    child: Icon(
-                      Icons.arrow_back_ios_new_outlined,
-                      color: Color(0xffc199cd),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 130.0,
-                  ),
-                  Text(
-                    widget.name,
-                    style: TextStyle(
-                        color: Color(0xffc199cd),
-                        fontSize: 20.0,
-                        fontWeight: FontWeight.w500),
-                  ),
-                ],
+      ),
+      child: _buildChatMessages(),
+    );
+  }
+
+  Widget _buildAppBar() {
+    return Padding(
+      padding: const EdgeInsets.only(left: 10.0),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: () {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => Home()),
+              );
+            },
+            child: Icon(
+              Icons.arrow_back_ios_new_outlined,
+              color: Color(0xffc199cd),
+            ),
+          ),
+          SizedBox(width: 130.0),
+          Text(
+            widget.name,
+            style: TextStyle(
+              color: Color(0xffc199cd),
+              fontSize: 20.0,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageInput() {
+    return Container(
+      margin: EdgeInsets.symmetric(horizontal: 20.0, vertical: 20.0),
+      alignment: Alignment.bottomCenter,
+      child: Material(
+        elevation: 5.0,
+        borderRadius: BorderRadius.circular(30.0),
+        child: Container(
+          padding: EdgeInsets.all(10.0),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(30.0),
+          ),
+          child: TextField(
+            controller: _messageController,
+            decoration: InputDecoration(
+              border: InputBorder.none,
+              hintText: 'Type a message....!',
+              hintStyle: TextStyle(color: Colors.black45),
+              suffixIcon: GestureDetector(
+                onTap: () => _addMessage(true),
+                child: Icon(Icons.send_rounded),
               ),
             ),
-            Container(
-              margin: EdgeInsets.only(left: 20.0, right: 20.0, bottom: 20.0),
-              alignment: Alignment.bottomCenter,
-              child: Material(
-                elevation: 5.0,
-                borderRadius: BorderRadius.circular(30.0),
-                child: Container(
-                  padding: EdgeInsets.all(10.0),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(30.0),
-                  ),
-                  child: TextField(
-                    controller: messageController,
-                    decoration: InputDecoration(
-                      border: InputBorder.none,
-                      hintText: "Type a message....!",
-                      hintStyle: TextStyle(
-                        color: Colors.black45,
-                      ),
-                      suffixIcon: GestureDetector(
-                          onTap: () {
-                            addMessage(true);
-                          },
-                          child: Icon(Icons.send_rounded)),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
